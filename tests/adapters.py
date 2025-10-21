@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from typing import Any, Callable, Literal
 
+from cs336_alignment.data_loader import SftDataset, iterate_batches
 from cs336_alignment.parser import parse_mmlu_response, parse_gsm8k_response
 import torch
 from torch import Tensor
@@ -276,7 +277,7 @@ The below adapters are used in the optional
 RLHF / safety part of the Alignment assignment.
 """
 
-
+# uv run pytest -k test_packed_sft_dataset
 def get_packed_sft_dataset(
     tokenizer: PreTrainedTokenizerBase,
     dataset_path: str | os.PathLike,
@@ -304,9 +305,9 @@ def get_packed_sft_dataset(
         "input_ids" contains the token IDs for the language modeling inputs, and "labels" contains
         the token IDs for the language modeling labels.
     """
-    raise NotImplementedError
+    return SftDataset(tokenizer, dataset_path, seq_length, shuffle)
 
-
+# uv run pytest -k test_iterate_batches
 def run_iterate_batches(
     dataset: Dataset,
     batch_size: int,
@@ -327,7 +328,7 @@ def run_iterate_batches(
     Returns:
         Iterable over batches, where each batch has size `batch_size`.
     """
-    raise NotImplementedError
+    return iterate_batches(dataset, batch_size, shuffle)
 
 # To test: uv run pytest -k test_parse_mmlu_response
 def run_parse_mmlu_response(

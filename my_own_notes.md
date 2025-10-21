@@ -10,3 +10,4 @@
 - uv run pytest -k test_parse_mmlu_response  # ✅ WORKING!
 - uv run pytest -k test_parse_gsm8k_response  # ✅ WORKING!
 - uv run pytest tests/test_metrics.py -v  # ✅ All 4 tests passing!
+- uv run pytest -k test_packed_sft_dataset
