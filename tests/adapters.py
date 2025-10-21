@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from typing import Any, Callable, Literal
 
+from cs336_alignment.parser import parse_mmlu_response
 import torch
 from torch import Tensor
 from torch.utils.data import Dataset
@@ -328,7 +329,7 @@ def run_iterate_batches(
     """
     raise NotImplementedError
 
-
+# To test: uv run pytest -k test_parse_mmlu_response
 def run_parse_mmlu_response(
     mmlu_example: dict[str, Any],
     model_output: str,
@@ -352,8 +353,7 @@ def run_parse_mmlu_response(
         str (one of "A", "B", "C", or "D") if the model output can be parsed into a prediction,
         else None.
     """
-    raise NotImplementedError
-
+    return parse_mmlu_response(mmlu_example, model_output)
 
 def run_parse_gsm8k_response(
     model_output: str,
