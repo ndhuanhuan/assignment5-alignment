@@ -70,3 +70,44 @@ def parse_mmlu_response(
     
     # If none of the strategies work, return None
     return None
+
+# uv run pytest -k test_parse_gsm8k_response
+def parse_gsm8k_response(
+    model_output: str,
+) -> str | None:
+    """
+    Given a GSM8K model output, parse the model output into a predicted numeric answer by
+    taking the last number that occurs in the output.
+
+    model_output: str
+        str with the model's output to a GSM8K example.
+
+    Returns:
+        str with the predicted numeric answer if the model output can be parsed into a prediction,
+        else None.
+    """
+    # Clean the model output by stripping whitespace
+    output = model_output.strip()
+    
+    # Find all numbers (integers and decimals) in the output
+    # This pattern matches:
+    # - Optional negative sign
+    # - One or more digits
+    # - Optional decimal point followed by one or more digits
+    # - Handles comma-separated numbers like 1,000
+    number_pattern = r'-?\d+(?:,\d+)*(?:\.\d+)?'
+    
+    # Find all matches
+    matches = re.findall(number_pattern, output)
+    
+    if not matches:
+        return None
+    
+    # Take the last number found
+    last_number = matches[-1]
+    
+    # Remove commas from the number (e.g., "1,000" -> "1000")
+    last_number = last_number.replace(',', '')
+    
+    return last_number
+    

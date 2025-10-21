@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from typing import Any, Callable, Literal
 
-from cs336_alignment.parser import parse_mmlu_response
+from cs336_alignment.parser import parse_mmlu_response, parse_gsm8k_response
 import torch
 from torch import Tensor
 from torch.utils.data import Dataset
@@ -355,6 +355,7 @@ def run_parse_mmlu_response(
     """
     return parse_mmlu_response(mmlu_example, model_output)
 
+# uv run pytest -k test_parse_gsm8k_response
 def run_parse_gsm8k_response(
     model_output: str,
 ) -> str | None:
@@ -369,7 +370,7 @@ def run_parse_gsm8k_response(
         str with the predicted numeric answer if the model output can be parsed into a prediction,
         else None.
     """
-    raise NotImplementedError
+    return parse_gsm8k_response(model_output)
 
 
 def run_compute_per_instance_dpo_loss(
