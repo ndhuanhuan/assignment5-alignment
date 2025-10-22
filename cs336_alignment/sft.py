@@ -453,3 +453,116 @@ def get_response_log_probs(
     # - Different use cases need different masking strategies
     # - Separating concerns: this computes probabilities, caller decides masking
     return result
+
+def masked_normalize(
+    tensor: torch.Tensor,
+    mask: torch.Tensor,
+    dim: int | None = None,
+    normalize_constant: float = 1.0,
+) -> torch.Tensor:
+    """Sum over a dimension and normalize by a constant,
+    considering only the elements with mask value 1.
+
+    Args:
+        tensor: torch.Tensor, the tensor to sum and normalize.
+        mask: torch.Tensor, the mask. We only consider elements
+            with mask value 1.
+        dim: int | None, the dimension to sum along before
+            normalization. If None, sum over all dimensions.
+        normalize_constant: float, the constant to divide by
+            for normalization.
+
+    Returns:
+        torch.Tensor, the normalized sum, where masked elements
+            (mask=0) don't contribute to the sum.
+    """
+    # =============================================================================
+    # PURPOSE: Compute masked sum and normalize by a constant
+    # =============================================================================
+    # This function is crucial for computing loss in SFT (Supervised Fine-Tuning)
+    # where we need to:
+    # 1. Sum log-probabilities only for OUTPUT tokens (not prompt or padding)
+    # 2. Normalize by the total number of output tokens
+    #
+    # Why do we need masking?
+    # - In SFT, we concatenate prompt + output into a single sequence
+    # - But we only want to compute loss on the OUTPUT tokens
+    # - The mask indicates which tokens to include (1) and exclude (0)
+    #
+    # Example use case in SFT:
+    #   log_probs = [-0.5, -0.3, -0.8, -0.2, -0.1]  (log-probs for all tokens)
+    #   mask      = [   0,    0,    1,    1,    1]  (0=prompt, 1=output)
+    #   normalize_constant = 3  (number of output tokens)
+    #
+    # We want: sum(-0.8, -0.2, -0.1) / 3 = -1.1 / 3 = -0.367
+    # This is the average negative log-likelihood of the output tokens
+    
+    # =============================================================================
+    # STEP 1: Apply the mask to zero out unwanted elements
+    # =============================================================================
+    # We need to multiply the tensor by the mask to set masked-out positions to 0
+    #
+    # Why multiply instead of indexing?
+    # - Indexing would change the tensor shape, making it hard to maintain dimensions
+    # - Multiplication keeps the shape intact, just zeros out masked positions
+    # - This allows us to use torch.sum() with specific dimensions
+    #
+    # Example:
+    #   tensor = [[1.0, 2.0, 3.0],     mask = [[1, 0, 1],
+    #             [4.0, 5.0, 6.0]]              [1, 1, 0]]
+    #
+    #   masked_tensor = [[1.0, 0.0, 3.0],
+    #                    [4.0, 5.0, 0.0]]
+    #
+    # Note: We convert mask to float because:
+    # - mask is boolean (True/False or 1/0)
+    # - tensor is float
+    # - PyTorch requires matching dtypes for element-wise operations
+    masked_tensor = tensor * mask.float()
+    
+    # =============================================================================
+    # STEP 2: Sum along the specified dimension (or all dimensions)
+    # =============================================================================
+    # The 'dim' parameter controls which dimension to sum over:
+    # - dim=None: Sum ALL elements, return a scalar
+    # - dim=0: Sum along rows (collapsing the batch dimension)
+    # - dim=1: Sum along columns (collapsing the sequence dimension)
+    # - dim=-1: Sum along the last dimension
+    #
+    # Example with our masked_tensor above:
+    #   dim=None: sum all → 1.0 + 0.0 + 3.0 + 4.0 + 5.0 + 0.0 = 13.0
+    #   dim=0: sum rows → [5.0, 5.0, 3.0]  (each column summed)
+    #   dim=1: sum cols → [4.0, 9.0]       (each row summed)
+    #
+    # Why use torch.sum() instead of .sum()?
+    # - Both work, but torch.sum() is more explicit
+    # - Makes it clear we're calling a PyTorch function
+    # - Consistent with other torch operations in the codebase
+    masked_sum = torch.sum(masked_tensor, dim=dim)
+    
+    # =============================================================================
+    # STEP 3: Normalize by dividing by the constant
+    # =============================================================================
+    # The normalize_constant is typically:
+    # - Number of tokens in the output (for average per-token loss)
+    # - Gradient accumulation steps (for distributed training)
+    # - Batch size (for average per-example loss)
+    #
+    # Why normalize?
+    # - Makes losses comparable across different sequence lengths
+    # - Prevents longer sequences from dominating the gradient
+    # - Allows fair comparison between different batches
+    #
+    # Example:
+    #   If masked_sum = 13.0 and normalize_constant = 2.0
+    #   Result = 13.0 / 2.0 = 6.5
+    #
+    # In SFT loss computation:
+    #   log_probs: [batch, seq_len] with values like [-0.5, -0.3, -0.8, ...]
+    #   response_mask: [batch, seq_len] with values [0, 0, 1, 1, 1]
+    #   normalize_constant: total number of output tokens
+    #
+    #   masked_normalize(log_probs, response_mask, dim=None, normalize_constant)
+    #   → Average log-probability across all output tokens in the batch
+    #   → Negate this to get the cross-entropy loss (NLL loss)
+    return masked_sum / normalize_constant

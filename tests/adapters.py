@@ -5,7 +5,7 @@ from typing import Any, Callable, Literal
 
 from cs336_alignment.data_loader import SftDataset, iterate_batches
 from cs336_alignment.parser import parse_mmlu_response, parse_gsm8k_response
-from cs336_alignment.sft import compute_entropy, get_response_log_probs, tokenize_prompt_and_output
+from cs336_alignment.sft import compute_entropy, get_response_log_probs, masked_normalize, tokenize_prompt_and_output
 import torch
 from torch import Tensor
 from torch.utils.data import Dataset
@@ -275,7 +275,7 @@ def run_masked_normalize(
         torch.Tensor, the normalized sum, where masked elements
             (mask=0) don't contribute to the sum.
     """
-    raise NotImplementedError
+    return masked_normalize(tensor, mask, dim, normalize_constant)
 
 
 """
