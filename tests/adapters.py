@@ -5,6 +5,7 @@ from typing import Any, Callable, Literal
 
 from cs336_alignment.data_loader import SftDataset, iterate_batches
 from cs336_alignment.parser import parse_mmlu_response, parse_gsm8k_response
+from cs336_alignment.sft import tokenize_prompt_and_output
 import torch
 from torch import Tensor
 from torch.utils.data import Dataset
@@ -33,7 +34,7 @@ def run_tokenize_prompt_and_output(
             "response_mask": torch.Tensor of shape (batch_size, max(prompt_and_output_lens) - 1):
                 a mask on the response tokens in `labels`.
     """
-    raise NotImplementedError
+    return tokenize_prompt_and_output(prompt_strs, output_strs, tokenizer)
 
 
 def run_compute_group_normalized_rewards(
