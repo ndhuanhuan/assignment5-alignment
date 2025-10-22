@@ -295,4 +295,161 @@ def compute_entropy(logits: torch.Tensor) -> torch.Tensor:
     # - H ≈ 0: Very certain (one token dominates)
     # - H ≈ log(vocab_size): Very uncertain (uniform distribution)
     # - For vocab_size=50000, max entropy ≈ 10.8
-    return -torch.sum(px * logpx, dim = -1) 
+    return -torch.sum(px * logpx, dim = -1)
+
+
+def get_response_log_probs(
+    model: PreTrainedModel,
+    input_ids: torch.Tensor,
+    labels: torch.Tensor,
+    return_token_entropy: bool = False,
+) -> dict[str, torch.Tensor]:
+    """Get the conditional log-probs of the response given the prompt,
+        and optionally the entropy of the next token predictions.
+
+    Args:
+        model: PreTrainedModel, the model to score.
+        input_ids: torch.Tensor of shape (batch_size, sequence_length):
+            the tokenized prompt and output.
+        labels: torch.Tensor of shape (batch_size, sequence_length):
+            shifted input_ids.
+        return_token_entropy: bool, whether to return the entropy of the
+            next token predictions.
+
+    Returns:
+        dict[str, torch.Tensor]:
+            "log_probs": torch.Tensor of shape (batch_size, sequence_length):
+                the conditional log-probs of the response given the prompt.
+                Note that we have not masked out the token indices corresponding
+                to the prompt or padding; that is done in the train loop.
+            "token_entropy": Optional[torch.Tensor] of shape (batch_size, sequence_length):
+                the entropy of the next token predictions. As with the log-probs,
+                we have not masked out the token indices corresponding to the prompt
+                or padding; that is done in the train loop.
+    """
+    # =============================================================================
+    # PURPOSE: Compute log-probabilities of the actual tokens that appeared
+    # =============================================================================
+    # This function answers: "How likely was each token that actually appeared?"
+    #
+    # In SFT (Supervised Fine-Tuning), we need to know how confident the model
+    # was in predicting the correct output tokens. This is used to:
+    # 1. Compute the training loss (negative log-likelihood)
+    # 2. Evaluate model performance
+    # 3. Compare policy models in RL (GRPO)
+    #
+    # Input shapes:
+    #   input_ids: [batch_size, sequence_length]  - What model sees as context
+    #   labels:    [batch_size, sequence_length]  - What model should predict
+    #
+    # Example:
+    #   input_ids = [[10, 20, 30]]  - "What is"
+    #   labels    = [[20, 30, 40]]  - "is 2+2?"
+    #   We want: log P(20|10), log P(30|10,20), log P(40|10,20,30)
+    
+    # =============================================================================
+    # STEP 1: Forward pass through the model to get logits
+    # =============================================================================
+    # The model outputs raw scores (logits) for each token in the vocabulary
+    # at each position in the sequence.
+    #
+    # input_ids shape: [batch_size, sequence_length]
+    # logits shape:    [batch_size, sequence_length, vocab_size]
+    #
+    # Each logit[b, s, v] represents the model's raw score for predicting
+    # vocabulary token v at position s in batch item b.
+    #
+    # Example with vocab_size=100:
+    #   Position 0: model sees [10], produces 100 logits for next token
+    #   Position 1: model sees [10, 20], produces 100 logits for next token
+    #   Position 2: model sees [10, 20, 30], produces 100 logits for next token
+    logits = model(input_ids).logits  # [batch_size, seq_length, vocab_size]
+    
+    # =============================================================================
+    # STEP 2: Convert logits to log-probabilities
+    # =============================================================================
+    # Logits are raw scores - we need to convert them to probabilities
+    # using softmax, then take the log.
+    #
+    # Why log-probabilities instead of probabilities?
+    # 1. Numerical stability (probabilities can be very small, causing underflow)
+    # 2. Math convenience (multiplication becomes addition in log space)
+    # 3. Cross-entropy loss directly uses log-probabilities
+    #
+    # log_softmax computes: log(exp(logit[v]) / sum(exp(logit[i])))
+    # This is more numerically stable than: log(softmax(logits))
+    #
+    # Example at one position:
+    #   logits = [2.0, 1.0, 0.5, ..., 0.1]  (100 values)
+    #   After log_softmax: [-0.48, -1.48, -1.98, ..., -2.38]
+    #   These are log P(token_0), log P(token_1), log P(token_2), ...
+    log_softmax = torch.nn.functional.log_softmax(logits, dim=-1)
+    # Shape: [batch_size, sequence_length, vocab_size]
+    
+    # =============================================================================
+    # STEP 3: Extract log-probabilities of the actual tokens (labels)
+    # =============================================================================
+    # We have log-probabilities for ALL possible tokens at each position,
+    # but we only care about the log-probability of the token that ACTUALLY
+    # appeared (i.e., the label).
+    #
+    # torch.gather extracts specific values from a tensor using indices.
+    #
+    # Let's break down what happens:
+    # 1. labels.unsqueeze(-1): Add a dimension for gather
+    #    labels shape: [batch_size, seq_length]
+    #    After unsqueeze: [batch_size, seq_length, 1]
+    #
+    # 2. torch.gather(log_softmax, dim=-1, index=labels.unsqueeze(-1)):
+    #    From the vocabulary dimension (dim=-1), select the index specified by labels
+    #    Result shape: [batch_size, seq_length, 1]
+    #
+    # 3. .squeeze(-1): Remove the extra dimension
+    #    Final shape: [batch_size, seq_length]
+    #
+    # Visual example for one sequence:
+    #   Position 0: log_softmax has 100 values, labels[0]=20
+    #               → Extract log_softmax[0, 20] → log P(token_20)
+    #   Position 1: log_softmax has 100 values, labels[1]=30
+    #               → Extract log_softmax[1, 30] → log P(token_30)
+    #   Position 2: log_softmax has 100 values, labels[2]=40
+    #               → Extract log_softmax[2, 40] → log P(token_40)
+    #
+    # Result: [log P(20), log P(30), log P(40)]
+    log_probs = torch.gather(log_softmax, -1, labels.unsqueeze(-1)).squeeze(-1)
+    # Shape: [batch_size, sequence_length]
+    
+    # =============================================================================
+    # STEP 4: Package results in a dictionary
+    # =============================================================================
+    # We always return log_probs, and optionally return token_entropy
+    result = {'log_probs': log_probs}
+    
+    # =============================================================================
+    # STEP 5: Optionally compute token entropy
+    # =============================================================================
+    # If requested, compute the entropy of the probability distribution at
+    # each position. This measures how uncertain/confident the model is.
+    #
+    # High entropy: Model is uncertain (probabilities spread out)
+    # Low entropy: Model is confident (probability concentrated on few tokens)
+    #
+    # This is useful for:
+    # - Monitoring model confidence during training
+    # - Exploration in RL (encourage high entropy to explore)
+    # - Debugging (very low entropy might indicate overfitting)
+    if return_token_entropy:
+        result['token_entropy'] = compute_entropy(logits)
+        # Shape: [batch_size, sequence_length]
+    
+    # =============================================================================
+    # RETURN: Dictionary with log_probs and optionally token_entropy
+    # =============================================================================
+    # Note: We do NOT mask out prompt or padding tokens here!
+    # That masking happens in the training loop using the response_mask.
+    #
+    # Why not mask here?
+    # - This function is more general-purpose (can be used for evaluation too)
+    # - Different use cases need different masking strategies
+    # - Separating concerns: this computes probabilities, caller decides masking
+    return result

@@ -5,7 +5,7 @@ from typing import Any, Callable, Literal
 
 from cs336_alignment.data_loader import SftDataset, iterate_batches
 from cs336_alignment.parser import parse_mmlu_response, parse_gsm8k_response
-from cs336_alignment.sft import compute_entropy, tokenize_prompt_and_output
+from cs336_alignment.sft import compute_entropy, get_response_log_probs, tokenize_prompt_and_output
 import torch
 from torch import Tensor
 from torch.utils.data import Dataset
@@ -87,7 +87,7 @@ def run_compute_entropy(logits: torch.Tensor) -> torch.Tensor:
     """Get the entropy of the logits (i.e., entropy of the final dimension)."""
     return compute_entropy(logits)
 
-
+# uv run pytest -k test_get_response_log_probs
 def run_get_response_log_probs(
     model: torch.nn.Module,
     input_ids: torch.Tensor,
@@ -117,7 +117,12 @@ def run_get_response_log_probs(
                 we have not masked out the token indices corresponding to the prompt
                 or padding; that is done in the train loop.
     """
-    raise NotImplementedError
+    return get_response_log_probs(
+        model,
+        input_ids,
+        labels,
+        return_token_entropy,
+    )
 
 
 def run_compute_naive_policy_gradient_loss(
