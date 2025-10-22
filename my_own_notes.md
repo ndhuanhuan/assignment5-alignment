@@ -7,6 +7,9 @@
 - or "uv sync --extra gpu"
 
 # To Test
+- uv run pytest -k test_tokenize_prompt_and_output
+- uv run pytest -k test_compute_entropy
+
 - uv run pytest -k test_parse_mmlu_response  # ✅ WORKING!
 - uv run pytest -k test_parse_gsm8k_response  # ✅ WORKING!
 - uv run pytest tests/test_metrics.py -v  # ✅ All 4 tests passing!

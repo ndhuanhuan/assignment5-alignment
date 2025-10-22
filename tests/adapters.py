@@ -5,7 +5,7 @@ from typing import Any, Callable, Literal
 
 from cs336_alignment.data_loader import SftDataset, iterate_batches
 from cs336_alignment.parser import parse_mmlu_response, parse_gsm8k_response
-from cs336_alignment.sft import tokenize_prompt_and_output
+from cs336_alignment.sft import compute_entropy, tokenize_prompt_and_output
 import torch
 from torch import Tensor
 from torch.utils.data import Dataset
@@ -82,10 +82,10 @@ def run_compute_group_normalized_rewards(
     """
     raise NotImplementedError
 
-
+# uv run pytest -k test_compute_entropy
 def run_compute_entropy(logits: torch.Tensor) -> torch.Tensor:
     """Get the entropy of the logits (i.e., entropy of the final dimension)."""
-    raise NotImplementedError
+    return compute_entropy(logits)
 
 
 def run_get_response_log_probs(

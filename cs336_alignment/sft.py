@@ -186,3 +186,113 @@ def tokenize_prompt_and_output(
     # 3. Only compute loss where response_mask is True
     # 4. Backpropagate only on output tokens, not prompt tokens
     return {"input_ids": input_ids, "labels": labels, "response_mask": response_mask}
+
+
+def compute_entropy(logits: torch.Tensor) -> torch.Tensor:
+    """Compute the entropy of a probability distribution given logits.
+
+    Args:
+        logits: torch.Tensor of shape (..., vocab_size), the logits output by the model.
+
+    Returns:
+        torch.Tensor of shape (...), the entropy of the distribution at each position.
+    """
+    # =============================================================================
+    # ENTROPY: A measure of uncertainty/randomness in a probability distribution
+    # =============================================================================
+    # Entropy H(p) = -∑ p(x) log p(x)
+    #
+    # High entropy: Distribution is spread out (uncertain, random)
+    #   Example: p = [0.25, 0.25, 0.25, 0.25] → H ≈ 1.39 (very uncertain!)
+    #
+    # Low entropy: Distribution is peaked (certain, deterministic)
+    #   Example: p = [0.97, 0.01, 0.01, 0.01] → H ≈ 0.24 (very certain!)
+    #
+    # Why compute entropy in language models?
+    # - Measures how confident the model is in its predictions
+    # - Useful for debugging: extremely low entropy might indicate overfitting
+    # - Used in some RL algorithms to encourage exploration
+    #
+    # Input shape:  [..., vocab_size]  e.g., [batch, seq_len, vocab_size]
+    # Output shape: [...]               e.g., [batch, seq_len]
+    
+    # =============================================================================
+    # STEP 1: Compute log-probabilities from logits (numerically stable way)
+    # =============================================================================
+    # We need to convert logits (raw model outputs) to probabilities
+    #
+    # The naive way (NUMERICALLY UNSTABLE):
+    #   p(x) = exp(logit[x]) / sum(exp(logit[i]))
+    #   log p(x) = log(exp(logit[x])) - log(sum(exp(logit[i])))
+    #
+    # Problem: exp() can overflow for large logits!
+    #   If logit = 1000, then exp(1000) = infinity → NaN
+    #
+    # The stable way (what we use):
+    #   log p(x) = logit[x] - logsumexp(logits)
+    #   where logsumexp(logits) = log(sum(exp(logit[i])))
+    #
+    # This is mathematically equivalent but uses the log-sum-exp trick internally
+    # to avoid overflow by subtracting the max logit before exponentiating
+    
+    x = logits  # For clarity: x represents the logits
+    
+    # Compute log(sum(exp(logits))) along the vocabulary dimension (last dimension)
+    # keepdim=True preserves the dimension so we can broadcast during subtraction
+    #
+    # Example with vocab_size=4:
+    #   logits = [2.0, 1.0, 0.5, 0.3]
+    #   logsumexp = log(e^2.0 + e^1.0 + e^0.5 + e^0.3) ≈ 2.48
+    logsumexp = torch.logsumexp(logits, dim = -1, keepdim = True)
+    
+    # Compute log-probabilities: log p(x) = logit[x] - logsumexp
+    #
+    # This is the numerically stable way to compute log(softmax(logits))
+    #
+    # Example continuing from above:
+    #   logpx[0] = 2.0 - 2.48 = -0.48  → p(x) = e^(-0.48) ≈ 0.62
+    #   logpx[1] = 1.0 - 2.48 = -1.48  → p(x) = e^(-1.48) ≈ 0.23
+    #   logpx[2] = 0.5 - 2.48 = -1.98  → p(x) = e^(-1.98) ≈ 0.14
+    #   logpx[3] = 0.3 - 2.48 = -2.18  → p(x) = e^(-2.18) ≈ 0.11
+    #   (Note: these sum to ≈1.0 as required for probabilities ✓)
+    logpx = logits - logsumexp
+    
+    # =============================================================================
+    # STEP 2: Convert log-probabilities to probabilities
+    # =============================================================================
+    # We need actual probabilities p(x) to compute entropy
+    # p(x) = exp(log p(x))
+    #
+    # Why go from logits → log-probs → probs instead of just logits → probs?
+    # - Numerical stability! The logsumexp trick prevents overflow
+    # - We also need log p(x) for the entropy formula anyway
+    px = torch.exp(logpx)
+    
+    # =============================================================================
+    # STEP 3: Compute entropy using the formula H(p) = -∑ p(x) log p(x)
+    # =============================================================================
+    # Entropy formula breakdown:
+    # - p(x): Probability of token x
+    # - log p(x): Log-probability of token x (already computed as logpx)
+    # - p(x) * log p(x): Weighted log-probability
+    # - sum over all x: Sum over all tokens in vocabulary
+    # - Negative sign: By convention, entropy is positive
+    #
+    # Example with 4 tokens:
+    #   p =     [0.62,  0.23,  0.14,  0.11]
+    #   log p = [-0.48, -1.48, -1.98, -2.18]
+    #   p*log p = [-0.30, -0.34, -0.28, -0.24]
+    #   sum(p*log p) = -1.16
+    #   H(p) = -(-1.16) = 1.16  (moderate entropy)
+    #
+    # Why the negative sign?
+    # - log p(x) is always negative (since 0 < p(x) ≤ 1)
+    # - p(x) * log p(x) is always negative or zero
+    # - sum is negative
+    # - We negate to make entropy positive (standard convention)
+    #
+    # Interpretation:
+    # - H ≈ 0: Very certain (one token dominates)
+    # - H ≈ log(vocab_size): Very uncertain (uniform distribution)
+    # - For vocab_size=50000, max entropy ≈ 10.8
+    return -torch.sum(px * logpx, dim = -1) 
