@@ -566,3 +566,68 @@ def masked_normalize(
     #   → Average log-probability across all output tokens in the batch
     #   → Negate this to get the cross-entropy loss (NLL loss)
     return masked_sum / normalize_constant
+
+def sft_microbatch_train_step(
+    policy_log_probs: torch.Tensor,
+    response_mask: torch.Tensor,
+    gradient_accumulation_steps: int,
+    normalize_constant: float = 1.0,
+) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+    """Compute the policy gradient loss and backprop its gradients for a microbatch.
+    
+    Args:
+        policy_log_probs: torch.Tensor of shape (batch_size, sequence_length):
+            Per-token log-probabilities from the SFT policy being trained.
+        response_mask: torch.Tensor of shape (batch_size, sequence_length):
+            1 for response tokens, 0 for prompt/padding tokens.
+        gradient_accumulation_steps: int:
+            Number of microbatches per optimizer step.
+        normalize_constant: float:
+            The constant by which to divide the sum. Defaults to 1.0.
+    
+    Returns:
+        tuple[torch.Tensor, dict[str, torch.Tensor]]:
+            - loss: Scalar tensor. The microbatch loss, adjusted for gradient accumulation.
+            - metadata: Dict with metadata (can include statistics for logging).
+    """
+    # =============================================================================
+    # COMPUTE SFT LOSS WITH GRADIENT ACCUMULATION
+    # =============================================================================
+    # This function computes the Supervised Fine-Tuning loss in three steps:
+    #
+    # 1. masked_normalize: Compute average log-prob per sequence
+    #    - For each sequence in the batch, sum log-probs of response tokens
+    #    - Divide by normalize_constant (typically 1.0, but could be num_tokens)
+    #    - Result shape: (batch_size,)
+    #
+    # 2. .mean(): Average across the batch
+    #    - Reduces (batch_size,) to scalar
+    #    - Gives us the mean log-likelihood across all sequences
+    #
+    # 3. Negate and scale: -(...) / gradient_accumulation_steps
+    #    - Negate: maximize log-likelihood = minimize negative log-likelihood
+    #    - Scale by gradient_accumulation_steps for proper gradient accumulation
+    #
+    # Why scale by gradient_accumulation_steps?
+    # - When accumulating gradients over G microbatches, each microbatch
+    #   contributes to the total gradient
+    # - Dividing by G ensures that the accumulated gradient equals the gradient
+    #   of the average loss across all G microbatches
+    # - This simulates training with a batch size of G × microbatch_size
+    #
+    # Example with gradient_accumulation_steps=2:
+    #   Microbatch 1: loss = -2.0 / 2 = -1.0, gradients scaled by 1/2
+    #   Microbatch 2: loss = -3.0 / 2 = -1.5, gradients scaled by 1/2
+    #   After accumulation: total gradient = (grad1 + grad2) / 2 ✓
+    loss = -masked_normalize(
+        tensor=policy_log_probs,
+        mask=response_mask,
+        dim=-1,  # Sum over sequence dimension for each batch item
+        normalize_constant=normalize_constant
+    ).mean() / gradient_accumulation_steps
+    
+    # Perform backward pass to compute and accumulate gradients
+    loss.backward()
+    
+    # Return loss for logging (empty metadata dict for compatibility)
+    return (loss, {})
