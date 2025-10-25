@@ -132,3 +132,51 @@ def compute_naive_policy_gradient_loss(
     # Broadcasting happens: (batch_size, 1) × (batch_size, sequence_length)
     # Result shape: (batch_size, sequence_length)
     return - raw_rewards_or_advantages * policy_log_probs
+
+def compute_grpo_clip_loss(
+    advantages: torch.Tensor,
+    policy_log_probs: torch.Tensor,
+    old_log_probs: torch.Tensor,
+    cliprange: float,
+) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+    """Compute the GRPO-Clip (PPO-style) loss for policy optimization.
+    
+    Implements: -min(ratio * A_t, clip(ratio, 1-ε, 1+ε) * A_t)
+    where ratio = π_θ(o_t|q,o_<t) / π_θ_old(o_t|q,o_<t)
+    
+    Args:
+        advantages: Per-token or per-sequence advantages
+        policy_log_probs: log π_θ(o_t|q,o_<t) from current policy
+        old_log_probs: log π_θ_old(o_t|q,o_<t) from old policy
+        cliprange: Clipping parameter ε (typically 0.2)
+    
+    Returns:
+        Tuple of (loss, metadata_dict)
+    """
+    # Compute probability ratio: π_θ(o_t) / π_θ_old(o_t)
+    # 
+    # WHY exp(log_prob - old_log_prob)?
+    # We have: log π_θ(o_t) and log π_θ_old(o_t)
+    # We want: π_θ(o_t) / π_θ_old(o_t)
+    #
+    # Using log properties:
+    #   ratio = π_θ / π_θ_old
+    #         = exp(log π_θ) / exp(log π_θ_old)
+    #         = exp(log π_θ - log π_θ_old)    [since exp(a)/exp(b) = exp(a-b)]
+    #
+    # This is numerically stable (avoids underflow from small probabilities)
+    ratio = torch.exp(policy_log_probs - old_log_probs)
+    
+    # Clip the ratio to [1-ε, 1+ε] to prevent large policy updates
+    # If ratio > 1+ε: policy assigns much higher probability than old policy (clip it)
+    # If ratio < 1-ε: policy assigns much lower probability than old policy (clip it)
+    clip_ratio = torch.clip(ratio, min = 1 - cliprange, max = 1 + cliprange)
+    
+    # Compute the clipped objective: -min(A*ratio, A*clip_ratio)
+    # - Unclipped term: advantages * ratio (normal policy gradient)
+    # - Clipped term: advantages * clip_ratio (conservative update)
+    # - Take minimum (most pessimistic) to prevent destructive updates
+    # - Negate to convert maximization into minimization problem
+    loss = -torch.min(advantages * ratio, advantages * clip_ratio)
+    
+    return (loss, {})
