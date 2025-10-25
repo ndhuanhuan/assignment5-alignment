@@ -1,5 +1,180 @@
-from typing import Literal
+from typing import Literal, Callable
 import torch
+
+def compute_group_normalized_rewards(
+    reward_fn: Callable[[str, str], dict[str, float]],
+    rollout_responses: list[str],
+    repeated_ground_truths: list[str],
+    group_size: int,
+    advantage_eps: float,
+    normalize_by_std: bool,
+) -> tuple[torch.Tensor, torch.Tensor, dict[str, float]]:
+    """Compute group-normalized rewards (advantages) for GRPO training.
+    
+    GRPO generates multiple responses per prompt and normalizes rewards within each group.
+    This reduces variance and makes training more stable by comparing responses to the
+    same prompt rather than across different prompts.
+    
+    Two normalization modes:
+    1. normalize_by_std=True: A(i) = (r(i) - mean) / (std + ε)  [Standard GRPO]
+    2. normalize_by_std=False: A(i) = r(i) - mean  [Dr. GRPO - simpler, avoids rewarding low variance]
+    
+    Args:
+        reward_fn: Function that scores (response, ground_truth) → {"reward": float, ...}
+        rollout_responses: All generated responses, length = n_prompts × group_size
+        repeated_ground_truths: Ground truths repeated group_size times per prompt
+        group_size: Number of responses generated per prompt (typically 4-8)
+        advantage_eps: Small constant (e.g., 1e-8) to prevent division by zero
+        normalize_by_std: If True, use standard GRPO; if False, use Dr. GRPO (simpler)
+    
+    Returns:
+        advantages: (rollout_batch_size,) - Normalized rewards for training
+        raw_rewards: (rollout_batch_size,) - Original rewards for logging
+        metadata: Dict with reward statistics for monitoring
+    
+    Example:
+        # 2 prompts, 3 responses each (group_size=3)
+        rollout_responses = ["ans1", "ans2", "ans3", "ans4", "ans5", "ans6"]
+        repeated_ground_truths = ["truth1", "truth1", "truth1", "truth2", "truth2", "truth2"]
+        group_size = 3
+        
+        # Suppose rewards are:
+        raw_rewards = [0.8, 0.5, 0.2,   # Group 1 (prompt 1)
+                       1.0, 0.7, 0.4]   # Group 2 (prompt 2)
+        
+        # Group 1: mean=0.5, std=0.3
+        # Group 2: mean=0.7, std=0.3
+        
+        # With normalize_by_std=True:
+        advantages = [(0.8-0.5)/0.3, (0.5-0.5)/0.3, (0.2-0.5)/0.3,
+                      (1.0-0.7)/0.3, (0.7-0.7)/0.3, (0.4-0.7)/0.3]
+                   = [1.0, 0.0, -1.0, 1.0, 0.0, -1.0]
+        
+        # With normalize_by_std=False (Dr. GRPO):
+        advantages = [0.3, 0.0, -0.3, 0.3, 0.0, -0.3]
+    """
+    # ==========================================================================
+    # STEP 1: Validate input dimensions
+    # ==========================================================================
+    rollout_batch_size = len(rollout_responses)
+    assert rollout_batch_size % group_size == 0, (
+        f"rollout_batch_size ({rollout_batch_size}) must be divisible by "
+        f"group_size ({group_size})"
+    )
+    
+    # Calculate number of unique prompts
+    # Example: 12 responses with group_size=4 → 3 prompts
+    n_prompts_per_rollout_batch = rollout_batch_size // group_size
+    
+    # ==========================================================================
+    # STEP 2: Compute raw rewards using the reward function
+    # ==========================================================================
+    # Call reward_fn for each (response, ground_truth) pair
+    # reward_fn returns a dict, we extract the "reward" key
+    #
+    # Example:
+    #   rollout_responses = ["42", "41", "43"]
+    #   repeated_ground_truths = ["42", "42", "42"]
+    #   rewards = [1.0, 0.0, 0.0]  # Only first answer is correct
+    rewards = [
+        reward_fn(response, truth)['reward'] 
+        for response, truth in zip(rollout_responses, repeated_ground_truths)
+    ]
+    
+    # ==========================================================================
+    # STEP 3: Reshape rewards into groups
+    # ==========================================================================
+    # Convert to tensor and reshape into (n_prompts, group_size)
+    # This groups responses by their original prompt
+    #
+    # Example with 6 responses, group_size=3:
+    #   Before: [r1, r2, r3, r4, r5, r6]
+    #   After:  [[r1, r2, r3],    # Group 1 (prompt 1)
+    #            [r4, r5, r6]]    # Group 2 (prompt 2)
+    raw_rewards = torch.tensor(rewards, dtype=torch.float32).reshape(
+        n_prompts_per_rollout_batch, 
+        group_size
+    )
+    
+    # ==========================================================================
+    # STEP 4: Compute per-group mean (baseline)
+    # ==========================================================================
+    # Calculate mean reward within each group
+    # Shape: (n_prompts, 1) - keepdim=True preserves dimension for broadcasting
+    #
+    # Why subtract the mean?
+    # - Reduces variance in policy gradient estimates
+    # - Makes training more stable
+    # - Responses are compared relative to other responses to the same prompt
+    #
+    # Example:
+    #   raw_rewards = [[0.8, 0.5, 0.2],
+    #                  [1.0, 0.7, 0.4]]
+    #   mean = [[0.5],   # (0.8+0.5+0.2)/3
+    #           [0.7]]   # (1.0+0.7+0.4)/3
+    mean = torch.mean(raw_rewards, dim=-1, keepdim=True)
+    
+    # ==========================================================================
+    # STEP 5: Compute advantages (centered rewards)
+    # ==========================================================================
+    # Subtract group mean from each reward
+    # Broadcasting: (n_prompts, group_size) - (n_prompts, 1)
+    #
+    # Positive advantage → response better than average for this prompt
+    # Negative advantage → response worse than average for this prompt
+    # Zero advantage → response is exactly average
+    #
+    # Example (continuing from above):
+    #   advantages = [[0.8-0.5, 0.5-0.5, 0.2-0.5],
+    #                 [1.0-0.7, 0.7-0.7, 0.4-0.7]]
+    #              = [[0.3, 0.0, -0.3],
+    #                 [0.3, 0.0, -0.3]]
+    advantages = raw_rewards - mean
+    
+    # ==========================================================================
+    # STEP 6: Optionally normalize by standard deviation
+    # ==========================================================================
+    if normalize_by_std:
+        # Standard GRPO: Divide by per-group standard deviation
+        # This makes advantages scale-invariant (unit variance per group)
+        #
+        # Why normalize by std?
+        # - Makes gradient magnitudes consistent across prompts
+        # - Prevents prompts with high reward variance from dominating training
+        #
+        # Why Dr. GRPO argues against this:
+        # - Rewards prompts with low variation (all answers similar quality)
+        # - May not be desirable - we want to distinguish good vs bad prompts
+        #
+        # Example:
+        #   std = [[0.3],   # Standard deviation of [0.8, 0.5, 0.2]
+        #          [0.3]]   # Standard deviation of [1.0, 0.7, 0.4]
+        #   advantages = [[0.3/0.3, 0.0/0.3, -0.3/0.3],
+        #                 [0.3/0.3, 0.0/0.3, -0.3/0.3]]
+        #              = [[1.0, 0.0, -1.0],
+        #                 [1.0, 0.0, -1.0]]
+        #
+        # Note: advantage_eps prevents division by zero if all rewards are identical
+        advantages = advantages / (torch.std(raw_rewards, dim=-1, keepdim=True) + advantage_eps)
+    
+    # ==========================================================================
+    # STEP 7: Flatten and return results
+    # ==========================================================================
+    # Reshape from (n_prompts, group_size) back to (rollout_batch_size,)
+    # This matches the original order of rollout_responses
+    #
+    # Example:
+    #   advantages = [[1.0, 0.0, -1.0],
+    #                 [1.0, 0.0, -1.0]]
+    #   After reshape: [1.0, 0.0, -1.0, 1.0, 0.0, -1.0]
+    return (
+        advantages.reshape(-1),    # Flattened advantages for training
+        raw_rewards.reshape(-1),   # Flattened raw rewards for logging
+        {}                         # Empty metadata dict (can add reward stats if needed)
+    )
+
+
+
 
 def compute_naive_policy_gradient_loss(
     raw_rewards_or_advantages: torch.Tensor,

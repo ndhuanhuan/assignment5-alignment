@@ -15,6 +15,7 @@ Check MODEL_DOWNLOAD_ISSUE
 - uv run pytest -k test_get_response_log_probs
 - uv run pytest -k test_masked_normalize
 - uv run pytest -k test_sft_microbatch_train_step
+- uv run pytest -k test_compute_group_normalized_rewards
 - uv run pytest -k test_compute_naive_policy_gradient_loss
 - uv run pytest -k test_compute_grpo_clip_loss
 - uv run pytest -k test_compute_policy_gradient_loss

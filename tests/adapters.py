@@ -4,7 +4,7 @@ import os
 from typing import Any, Callable, Literal
 
 from cs336_alignment.data_loader import SftDataset, iterate_batches
-from cs336_alignment.grpo import compute_grpo_clip_loss, compute_naive_policy_gradient_loss, compute_policy_gradient_loss, grpo_microbatch_train_step, masked_mean
+from cs336_alignment.grpo import compute_group_normalized_rewards, compute_grpo_clip_loss, compute_naive_policy_gradient_loss, compute_policy_gradient_loss, grpo_microbatch_train_step, masked_mean
 from cs336_alignment.parser import parse_mmlu_response, parse_gsm8k_response
 from cs336_alignment.sft import compute_entropy, get_response_log_probs, masked_normalize, sft_microbatch_train_step, tokenize_prompt_and_output
 import torch
@@ -81,7 +81,14 @@ def run_compute_group_normalized_rewards(
                 You may choose what you wish to log here
                 (some statistics of the rewards, etc.).
     """
-    raise NotImplementedError
+    return compute_group_normalized_rewards(
+        reward_fn,
+        rollout_responses,
+        repeated_ground_truths,
+        group_size,
+        advantage_eps,
+        normalize_by_std,
+    )
 
 # uv run pytest -k test_compute_entropy
 def run_compute_entropy(logits: torch.Tensor) -> torch.Tensor:
