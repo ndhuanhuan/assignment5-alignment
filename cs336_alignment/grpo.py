@@ -169,7 +169,7 @@ def compute_group_normalized_rewards(
     #   After reshape: [1.0, 0.0, -1.0, 1.0, 0.0, -1.0]
     return (
         advantages.reshape(-1),    # Flattened advantages for training
-        raw_rewards.reshape(-1),   # Flattened raw rewards for logging
+        raw_rewards.reshape(-1),   # Unnormalized rewards for each rollout response
         {}                         # Empty metadata dict (can add reward stats if needed)
     )
 
