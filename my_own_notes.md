@@ -18,6 +18,7 @@ Check MODEL_DOWNLOAD_ISSUE
 - uv run pytest -k test_compute_naive_policy_gradient_loss
 - uv run pytest -k test_compute_grpo_clip_loss
 - uv run pytest -k test_compute_policy_gradient_loss
+- uv run pytest -k test_masked_mean
 
 - uv run pytest -k test_parse_mmlu_response  # ✅ WORKING!
 - uv run pytest -k test_parse_gsm8k_response  # ✅ WORKING!

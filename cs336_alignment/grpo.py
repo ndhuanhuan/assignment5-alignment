@@ -196,3 +196,38 @@ def compute_policy_gradient_loss(
     return (compute_naive_policy_gradient_loss(advantages, policy_log_probs), {})
   else:
     return compute_grpo_clip_loss(advantages, policy_log_probs, old_log_probs, cliprange)
+
+def masked_mean(tensor: torch.Tensor, mask: torch.Tensor, dim: int | None = None) -> torch.Tensor:
+    """Compute mean of tensor only over masked positions (where mask==1).
+    
+    This computes the average over response tokens only, ignoring prompt/padding tokens.
+    Standard in RL for LLMs to normalize by response length.
+    
+    Args:
+        tensor: Values to average (e.g., losses, entropies)
+        mask: Binary mask (1=include, 0=ignore)
+        dim: Dimension to average over. If None, average over all masked elements.
+    
+    Returns:
+        Mean of masked elements along specified dimension.
+    
+    Example:
+        tensor = [[1.0, 2.0, 3.0, 4.0],
+                  [5.0, 6.0, 7.0, 8.0]]
+        mask   = [[1,   1,   0,   0],     # First 2 tokens are response
+                  [1,   1,   1,   0]]     # First 3 tokens are response
+        
+        masked_mean(tensor, mask, dim=1):
+            → [(1.0+2.0)/2, (5.0+6.0+7.0)/3]
+            → [1.5, 6.0]
+        
+        masked_mean(tensor, mask, dim=None):
+            → (1.0+2.0+5.0+6.0+7.0) / 5
+            → 4.2
+    """
+    # Zero out non-response tokens (mask==0)
+    masked_tensor = tensor * mask
+    
+    # Compute mean: sum(masked values) / count(masked positions)
+    # This normalizes by response length, not total sequence length
+    return torch.sum(masked_tensor, dim = dim) / torch.sum(mask, dim = dim)

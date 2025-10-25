@@ -4,7 +4,7 @@ import os
 from typing import Any, Callable, Literal
 
 from cs336_alignment.data_loader import SftDataset, iterate_batches
-from cs336_alignment.grpo import compute_grpo_clip_loss, compute_naive_policy_gradient_loss, compute_policy_gradient_loss
+from cs336_alignment.grpo import compute_grpo_clip_loss, compute_naive_policy_gradient_loss, compute_policy_gradient_loss, masked_mean
 from cs336_alignment.parser import parse_mmlu_response, parse_gsm8k_response
 from cs336_alignment.sft import compute_entropy, get_response_log_probs, masked_normalize, sft_microbatch_train_step, tokenize_prompt_and_output
 import torch
@@ -217,7 +217,7 @@ def run_masked_mean(tensor: torch.Tensor, mask: torch.Tensor, dim: int | None = 
         torch.Tensor, the mean of the tensor along the specified
             dimension, considering only the elements with mask value 1.
     """
-    raise NotImplementedError
+    return masked_mean(tensor, mask, dim)
 
 def run_sft_microbatch_train_step(
     policy_log_probs: torch.Tensor,
