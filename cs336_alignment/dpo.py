@@ -41,11 +41,15 @@ def get_logs_prob(lm: torch.nn.Module, prompt: list[int]) -> torch.Tensor:
     # Prepare input_ids and labels for next-token prediction
     # input_ids: [10, 20, 30] (all but last)
     # labels: [20, 30, 40] (all but first)
-    input_ids = torch.tensor(prompt[:-1], dtype=torch.int64)
-    labels = torch.tensor(prompt[1:], dtype=torch.int64)
+    # 
+    # CRITICAL: Add batch dimension! Model expects (batch_size, seq_len)
+    # unsqueeze(0) converts (seq_len,) → (1, seq_len)
+    input_ids = torch.tensor(prompt[:-1], dtype=torch.int64).unsqueeze(0)
+    labels = torch.tensor(prompt[1:], dtype=torch.int64).unsqueeze(0)
     
     # Get per-token log-probabilities from the model
     # This computes log p(token_t | tokens_<t) for each position
+    # Result shape: (1, seq_len) - batch size is 1
     log_probs = get_response_log_probs(lm, input_ids, labels)['log_probs']
     
     # Sum to get total sequence log-probability
