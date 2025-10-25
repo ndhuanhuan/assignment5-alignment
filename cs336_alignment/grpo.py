@@ -1,3 +1,4 @@
+from typing import Literal
 import torch
 
 def compute_naive_policy_gradient_loss(
@@ -180,3 +181,18 @@ def compute_grpo_clip_loss(
     loss = -torch.min(advantages * ratio, advantages * clip_ratio)
     
     return (loss, {})
+
+def compute_policy_gradient_loss(
+  policy_log_probs: torch.Tensor,
+  loss_type: Literal["no_baseline", "reinforce_with_baseline", "grpo_clip"],
+  raw_rewards: torch.Tensor | None= None,
+  advantages: torch.Tensor | None= None,
+  old_log_probs: torch.Tensor | None= None,
+  cliprange: float | None= None,
+) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+  if loss_type == 'no_baseline':
+    return (compute_naive_policy_gradient_loss(raw_rewards, policy_log_probs), {})
+  elif loss_type == 'reinforce_with_baseline':
+    return (compute_naive_policy_gradient_loss(advantages, policy_log_probs), {})
+  else:
+    return compute_grpo_clip_loss(advantages, policy_log_probs, old_log_probs, cliprange)
