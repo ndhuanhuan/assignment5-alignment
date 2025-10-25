@@ -4,6 +4,7 @@ import os
 from typing import Any, Callable, Literal
 
 from cs336_alignment.data_loader import SftDataset, iterate_batches
+from cs336_alignment.grpo import compute_naive_policy_gradient_loss
 from cs336_alignment.parser import parse_mmlu_response, parse_gsm8k_response
 from cs336_alignment.sft import compute_entropy, get_response_log_probs, masked_normalize, sft_microbatch_train_step, tokenize_prompt_and_output
 import torch
@@ -141,7 +142,10 @@ def run_compute_naive_policy_gradient_loss(
         torch.Tensor of shape (batch_size, sequence_length): 
             the policy gradient per-token loss.
     """
-    raise NotImplementedError
+    return compute_naive_policy_gradient_loss(
+        raw_rewards_or_advantages,
+        policy_log_probs,
+    )
 
 
 def run_compute_grpo_clip_loss(
