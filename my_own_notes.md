@@ -21,6 +21,7 @@ Check MODEL_DOWNLOAD_ISSUE
 - uv run pytest -k test_compute_policy_gradient_loss
 - uv run pytest -k test_masked_mean
 - uv run pytest -k test_grpo_microbatch_train_step
+- uv run pytest -k test_compute_group_normalized_rewards
 
 - uv run pytest -k test_parse_mmlu_response  # ✅ WORKING!
 - uv run pytest -k test_parse_gsm8k_response  # ✅ WORKING!

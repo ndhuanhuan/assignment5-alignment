@@ -4,6 +4,7 @@ import os
 from typing import Any, Callable, Literal
 
 from cs336_alignment.data_loader import SftDataset, iterate_batches
+from cs336_alignment.dpo import compute_per_instance_dpo_loss
 from cs336_alignment.grpo import compute_group_normalized_rewards, compute_grpo_clip_loss, compute_naive_policy_gradient_loss, compute_policy_gradient_loss, grpo_microbatch_train_step, masked_mean
 from cs336_alignment.parser import parse_mmlu_response, parse_gsm8k_response
 from cs336_alignment.sft import compute_entropy, get_response_log_probs, masked_normalize, sft_microbatch_train_step, tokenize_prompt_and_output
@@ -45,41 +46,53 @@ def run_compute_group_normalized_rewards(
     group_size: int,
     advantage_eps: float,
     normalize_by_std: bool,
-) -> tuple[torch.Tensor, dict[str, float]]:
-    """
-    Compute rewards for each group of rollout responses, 
-    normalized by the group size.
-
+) -> tuple[torch.Tensor, torch.Tensor, dict[str, float]]:
+    """Compute group-normalized rewards for GRPO training.
+    
     For more on GRPO, see:
         DeepSeekMath: https://arxiv.org/abs/2402.03300
         DeepSeek-R1: https://arxiv.org/abs/2501.12948
 
+    GRPO generates multiple responses per prompt and normalizes rewards within
+    each group. This variance reduction technique compares responses to the same
+    prompt rather than across different prompts.
+
     Args:
-        reward_fn: Callable[[str, str], dict[str, float]], 
-            scores the rollout responses against the ground truths, 
-            producing a dict with keys 
+        reward_fn: Callable[[str, str], dict[str, float]] 
+            Function that scores (response, ground_truth) → dict with keys
             "reward", "format_reward", and "answer_reward".
-        rollout_responses: list[str], rollouts from the policy. 
-            The length of this list is 
-            `rollout_batch_size = n_prompts_per_rollout_batch * group_size`.
-        repeated_ground_truths: list[str], the ground truths for the examples. 
-            The length of this list is `rollout_batch_size`, 
-            because the ground truth for each example is repeated `group_size` times.
-        group_size: int, number of rollouts per group.
-        advantage_eps: float, epsilon to avoid division by zero
-            during group normalization.
-        normalize_by_std: bool, whether to normalize the rewards by
-            std(rewards).
+        rollout_responses: list[str]
+            All generated responses from the policy.
+            Length = n_prompts_per_rollout_batch × group_size
+        repeated_ground_truths: list[str]
+            Ground truths repeated group_size times per prompt.
+            Length = rollout_batch_size (same as rollout_responses)
+        group_size: int
+            Number of responses generated per prompt (typically 4-8).
+        advantage_eps: float
+            Small constant (e.g., 1e-8) to prevent division by zero.
+        normalize_by_std: bool
+            If True: Standard GRPO with std normalization
+            If False: Dr. GRPO (simpler, avoids rewarding low variance)
 
     Returns:
         tuple[torch.Tensor, torch.Tensor, dict[str, float]]:
-            torch.Tensor of shape (rollout_batch_size,): 
-                group-normalized rewards for each rollout response.
-            torch.Tensor of shape (rollout_batch_size,): 
-                raw rewards for each rollout response.
-            dict[str, float]: metadata for the rewards of the rollout batch.
-                You may choose what you wish to log here
-                (some statistics of the rewards, etc.).
+            advantages: (rollout_batch_size,) - Normalized rewards for training
+            raw_rewards: (rollout_batch_size,) - Original rewards for logging
+            metadata: Dict with reward statistics for monitoring
+    
+    Example:
+        # 2 prompts, 3 responses each
+        rollout_responses = ["ans1", "ans2", "ans3", "ans4", "ans5", "ans6"]
+        repeated_ground_truths = ["gt1", "gt1", "gt1", "gt2", "gt2", "gt2"]
+        group_size = 3
+        
+        # Rewards might be: [0.8, 0.5, 0.2, 1.0, 0.7, 0.4]
+        # Group 1 (prompt 1): [0.8, 0.5, 0.2] → mean=0.5
+        # Group 2 (prompt 2): [1.0, 0.7, 0.4] → mean=0.7
+        
+        # Advantages: [0.3, 0.0, -0.3, 0.3, 0.0, -0.3]
+        # (each response compared to its group's average)
     """
     return compute_group_normalized_rewards(
         reward_fn,
@@ -449,4 +462,4 @@ def run_compute_per_instance_dpo_loss(
     Returns:
         torch.Tensor with the DPO loss for this example.
     """
-    raise NotImplementedError
+    return compute_per_instance_dpo_loss(lm, lm_ref, tokenizer, beta, prompt, response_chosen, response_rejected)
