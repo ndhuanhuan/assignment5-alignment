@@ -4,7 +4,7 @@ import os
 from typing import Any, Callable, Literal
 
 from cs336_alignment.data_loader import SftDataset, iterate_batches
-from cs336_alignment.grpo import compute_grpo_clip_loss, compute_naive_policy_gradient_loss, compute_policy_gradient_loss, masked_mean
+from cs336_alignment.grpo import compute_grpo_clip_loss, compute_naive_policy_gradient_loss, compute_policy_gradient_loss, grpo_microbatch_train_step, masked_mean
 from cs336_alignment.parser import parse_mmlu_response, parse_gsm8k_response
 from cs336_alignment.sft import compute_entropy, get_response_log_probs, masked_normalize, sft_microbatch_train_step, tokenize_prompt_and_output
 import torch
@@ -271,7 +271,16 @@ def run_grpo_microbatch_train_step(
         tuple[torch.Tensor, dict[str, torch.Tensor]]: 
             the policy gradient loss and its metadata.
     """
-    raise NotImplementedError
+    return grpo_microbatch_train_step(
+        policy_log_probs=policy_log_probs,
+        response_mask=response_mask,
+        gradient_accumulation_steps=gradient_accumulation_steps,
+        loss_type=loss_type,
+        raw_rewards=raw_rewards,
+        advantages=advantages,
+        old_log_probs=old_log_probs,
+        cliprange=cliprange,
+    )
 
 
 def run_masked_normalize(
